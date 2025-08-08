@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Repas & Courses</title>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="theme-color" content="#0a84ff">
+  <style>
+  :root { --bg:#f6f6f7; --card:#fff; --ink:#111; --muted:#6b7280; --line:#e5e7eb; --accent:#0a84ff; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .container { max-width: 900px; margin: 0 auto; padding: 16px; }
+  .h1 { font-size: 24px; font-weight: 700; margin: 8px 0 12px; }
+  .card { background: var(--card); border-radius: 16px; padding: 14px; box-shadow: 0 8px 24px rgba(0,0,0,.06); }
+  .grid { display: grid; gap: 10px; }
+  .input, select { width: 100%; padding: 12px 12px; border: 1px solid var(--line); background: #fff; border-radius: 12px; font-size: 16px; }
+  .badge { font-size: 12px; color: var(--muted); }
+  .hr { height: 1px; background: var(--line); margin: 10px 0; }
+  .row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+  .row .name { text-transform: capitalize; }
+  .toolbar { position: sticky; top: 0; background: var(--bg); padding-bottom: 8px; z-index: 5; }
+  .button { appearance:none; border:0; border-radius:12px; padding:10px 14px; font-size:16px; }
+  .button.primary { background: var(--ink); color: white; }
+  .button.ghost { background: transparent; color: var(--ink); }
+  .header { display:flex; align-items:center; justify-content: space-between; }
+  .columns { display:grid; grid-template-columns: repeat(1, 1fr); gap:10px; }
+  .column { background: var(--card); border-radius:16px; padding:10px; }
+  .col-title { font-weight:600; margin-bottom:6px; }
+  .slot { margin-bottom:10px; }
+  .slot .label { font-size:12px; color:var(--muted); margin-bottom:4px; }
+  footer { text-align:center; color:var(--muted); font-size:12px; padding: 16px 0 32px; }
+  @media (min-width: 700px) { .columns { grid-template-columns: repeat(4, 1fr); } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="toolbar">
+      <div class="header">
+        <div class="h1">Planning &amp; Liste de courses</div>
+        <div style="display:flex; gap:8px;">
+          <button class="button ghost" id="resetBtn">Réinitialiser</button>
+          <button class="button primary" id="exportBtn">Export CSV</button>
+        </div>
+      </div>
+      <input id="search" class="input" placeholder="Rechercher une recette…" />
+      <div class="badge" id="count"></div>
+    </div>
+
+    <div class="card">
+      <div class="columns" id="days"></div>
+    </div>
+
+    <div class="card" style="margin-top:12px;">
+      <h2 style="margin: 8px 0 0;">Liste de courses</h2>
+      <div class="hr"></div>
+      <div id="grocery"></div>
+    </div>
+
+    <footer>Ajoute à l'écran d'accueil via Safari → Partager → Ajouter à l'écran d'accueil.</footer>
+  </div>
+
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(console.error);
+  });
+}
+
+const SLOTS = ["breakfast","lunch","dinner"];
+const labels = { breakfast: "Petit-déj", lunch: "Déjeuner", dinner: "Dîner" };
+const key = "mealplanner-pwa-v1";
+
+function startOfWeek(d){
+  const date = new Date(d);
+  const day = (date.getDay() + 6) % 7;
+  date.setDate(date.getDate() - day);
+  date.setHours(0,0,0,0);
+  return date;
+}
+const weekStart = startOfWeek(new Date());
+
+function fmtDay(d){ return d.toLocaleDateString("fr-FR", { weekday:"long", day:"2-digit", month:"2-digit" }); }
+
+function loadEntries(){
+  const saved = localStorage.getItem(key);
+  if (saved) return JSON.parse(saved);
+  const init = [];
+  for (let i=0;i<7;i++){
+    const day = new Date(weekStart); day.setDate(weekStart.getDate()+i);
+    for (const s of SLOTS) init.push({ dateISO: new Date(day).toISOString(), slot: s, recipeTitle: "" });
+  }
+  return init;
+}
+let entries = loadEntries();
+function save(){ localStorage.setItem(key, JSON.stringify(entries)); }
+
+let RECIPES = [];
+fetch("./recipes.json").then(r=>r.json()).then(data => { RECIPES = data; renderDays(); renderGrocery(); });
+
+function renderDays(){
+  const daysEl = document.getElementById("days");
+  if (!RECIPES.length) { daysEl.innerHTML = "<div class='badge'>Chargement des recettes…</div>"; return; }
+  daysEl.innerHTML = "";
+  const q = document.getElementById("search").value.toLowerCase();
+  const filtered = RECIPES.filter(r => !q || r.title.toLowerCase().includes(q) || (r.category||"").toLowerCase().includes(q));
+  document.getElementById("count").textContent = filtered.length + " recettes";
+  const days = Array.from({length: 7}).map((_,i) => { const d=new Date(weekStart); d.setDate(weekStart.getDate()+i); return d; });
+
+  for (const d of days){
+    const col = document.createElement("div");
+    col.className = "column";
+    const title = document.createElement("div");
+    title.className = "col-title";
+    title.textContent = fmtDay(d);
+    col.appendChild(title);
+
+    for (const s of SLOTS){
+      const slotDiv = document.createElement("div");
+      slotDiv.className = "slot";
+
+      const lab = document.createElement("div");
+      lab.className = "label";
+      lab.textContent = labels[s];
+      slotDiv.appendChild(lab);
+
+      const sel = document.createElement("select");
+      sel.innerHTML = `<option value="">Choisir…</option>` + filtered.slice(0,600).map(r => `<option>${r.title}</option>`).join("");
+      const current = entries.find(e => new Date(e.dateISO).toDateString() === d.toDateString() && e.slot === s);
+      if (current && current.recipeTitle) sel.value = current.recipeTitle;
+      sel.addEventListener("change", () => {
+        const idx = entries.findIndex(e => new Date(e.dateISO).toDateString() === d.toDateString() && e.slot === s);
+        entries[idx].recipeTitle = sel.value;
+        save(); renderGrocery();
+      });
+      slotDiv.appendChild(sel);
+      col.appendChild(slotDiv);
+    }
+    daysEl.appendChild(col);
+  }
+}
+
+function renderGrocery(){
+  if (!RECIPES.length) return;
+  const map = new Map();
+  for (const e of entries){
+    if (!e.recipeTitle) continue;
+    const r = RECIPES.find(x => x.title === e.recipeTitle);
+    if (!r) continue;
+    for (const ing of r.ingredients){
+      const k = (ing.name||"").trim().toLowerCase() + "|" + ((ing.unit||"")||"").toLowerCase();
+      const prev = map.get(k) || { total: 0, unit: ing.unit };
+      map.set(k, { total: prev.total + (Number(ing.quantity)||0), unit: prev.unit || ing.unit });
+    }
+  }
+  const arr = Array.from(map.entries()).map(([k,v]) => {
+    const [name, unit] = k.split("|");
+    return { name, unit: v.unit || unit || "", total: v.total };
+  }).sort((a,b) => a.name.localeCompare(b.name));
+
+  const root = document.getElementById("grocery");
+  root.innerHTML = "";
+  for (const it of arr){
+    const row = document.createElement("div");
+    row.className = "row";
+    const left = document.createElement("div");
+    left.className = "name"; left.textContent = it.name;
+    const right = document.createElement("div");
+    right.className = "badge"; right.textContent = `${Number.isInteger(it.total) ? it.total.toFixed(0) : it.total.toFixed(1)} ${it.unit}`.trim();
+    row.appendChild(left); row.appendChild(right);
+    root.appendChild(row);
+  }
+}
+
+function exportCSV(){
+  const lines = [["item","quantity","unit"]];
+  const map = new Map();
+  for (const e of entries){
+    if (!e.recipeTitle) continue;
+    const r = RECIPES.find(x => x.title === e.recipeTitle);
+    if (!r) continue;
+    for (const ing of r.ingredients){
+      const k = (ing.name||"").trim().toLowerCase() + "|" + ((ing.unit||"")||"").toLowerCase();
+      const prev = map.get(k) || 0;
+      map.set(k, prev + (Number(ing.quantity)||0));
+    }
+  }
+  for (const [k,total] of map){
+    const [name, unit] = k.split("|");
+    lines.push([name, String(total), unit]);
+  }
+  const csv = lines.map(r=>r.map(x => `"${String(x).replaceAll('"','""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv], {type: "text/csv;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "courses.csv"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+document.getElementById("search").addEventListener("input", renderDays);
+document.getElementById("exportBtn").addEventListener("click", exportCSV);
+document.getElementById("resetBtn").addEventListener("click", () => {
+  if (confirm("Réinitialiser le planning de la semaine ?")) {
+    localStorage.removeItem(key); entries = loadEntries(); renderDays(); renderGrocery();
+  }
+});
+</script>
+</body>
+</html>
